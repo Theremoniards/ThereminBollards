@@ -2,6 +2,7 @@
 #include "LPD6803.h"
 
 #define MIN_CV_LEVEL 75
+#define MAX_CV_LEVEL 1000
 #define LED_RANGE 31
 #define WHEEL_RANGE 127
 
@@ -26,15 +27,13 @@ byte ledLevel = 0;
 // Timer 1 is also used by the strip to send pixel clocks
 
 // Set the first variable to the NUMBER of pixels. 20 = 20 pixels in a row
-LPD6803 strip = LPD6803(120, dataPin, clockPin);
+LPD6803 strip = LPD6803(50, dataPin, clockPin);
 
 
 void setup() {
 
-  Serial.begin(9600);
-   
-  
-  
+ Serial.begin(9600);
+     
   // The Arduino needs to clock out the data to the pixels
   // this happens in interrupt timer 1, we can change how often
   // to call the interrupt. setting CPUmax to 100 will take nearly all all the
@@ -42,7 +41,7 @@ void setup() {
   // especially with strands of over 100 dots.
   // (Note that the max is 'pessimistic', its probably 10% or 20% less in reality)
   
-  strip.setCPUmax(90);  // start with 50% CPU usage. up this if the strand flickers or is slow
+  strip.setCPUmax(100);  // start with 50% CPU usage. up this if the strand flickers or is slow
   
   // Start up the LED counter
   strip.begin();
@@ -55,11 +54,17 @@ void setup() {
 void loop() {
  
   cvValue = analogRead(cvPin);
-  Serial.println(cvValue);
-  //Serial.println(ledColour);
   
-  ledLevel = map(cvValue, 0, 1024, 0, WHEEL_RANGE); 
-  
+ ledLevel = map(cvValue, 0, 1023, 0, WHEEL_RANGE); 
+
+ 
+ int bar_length = 7;
+ int bar_level = map(cvValue,0,MAX_CV_LEVEL, 0,bar_length);
+ uint8_t pixelCVRange = (MAX_CV_LEVEL / bar_length);
+ uint8_t residualcv = cvValue-pixelCVRange*bar_level;
+ uint8_t rcv = map(residualcv,0,pixelCVRange,0,31);
+ Serial.println(rcv);
+ 
   if (cvValue <= MIN_CV_LEVEL)
   {
     cvValue =0;
@@ -67,108 +72,76 @@ void loop() {
   
   if (cvValue==0)
   {
-    colourSet(Color(0,0,0),5);
+    bar_level =0;
   }
-  else
-  {
   
-    colourSet(Wheel(ledLevel),5);
-  }
+  
+  //Serial.println(bar_level);
+  strip.clearPixels();
+  // SetBar(Color(31, 31, 0), 0, bar_length,bar_level,Color(rcv,rcv,0));
+  SetBar(Color(31, 31, 31), 0, bar_length,bar_level,Color(rcv,rcv,rcv));
+  SetBar(Color(31, 0, 0), 7, bar_length,bar_level,Color(rcv,0,0));
+  SetBar(Color(0, 31, 0), 14, bar_length,bar_level,Color(0,rcv,0));
+  SetBar(Color(0, 0, 31), 21, bar_length,bar_level,Color(0,0,rcv));
+  SetBar(Color(31, 31, 0), 28, bar_length,bar_level,Color(rcv,rcv,0));
+  SetBar(Color(0, 31, 31), 35, bar_length,bar_level,Color(0,rcv,rcv));
+  SetBar(Color(31, 0, 31), 42, bar_length,bar_level,Color(rcv,0,rcv));
+
+  
+  strip.show();
+  delay(10); 
+  
 
   //ledLevel=map(cvValue,0,1024,0,LED_RANGE);
-   //colourSet(Color(ledLevel,ledLevel,ledLevel),5);
-  //rainbowCycle(cvValue);
- 
-}
-
-void rainbow(uint8_t wait) {
-  int i, j;
-   
-  for (j=0; j < 96 * 3; j++) {     // 3 cycles of all 96 colors in the wheel
-    for (i=0; i < strip.numPixels(); i++) {
-      strip.setPixelColor(i, Wheel( (i + j) % 96));
-    }  
-    strip.show();   // write all the pixels out
-    delay(wait);
-  }
-}
-
-// Slightly different, this one makes the rainbow wheel equally distributed 
-// along the chain
-void rainbowCycle(uint8_t wait) {
-  int i, j;
   
-  for (j=0; j < 96 * 5; j++) {     // 5 cycles of all 96 colors in the wheel
-    for (i=0; i < strip.numPixels(); i++) {
-      // tricky math! we use each pixel as a fraction of the full 96-color wheel
-      // (thats the i / strip.numPixels() part)
-      // Then add in j which makes the colors go around per pixel
-      // the % 96 is to make the wheel cycle around
-      strip.setPixelColor(i, Wheel( ((i * 96 / strip.numPixels()) + j) % 96) );
-    }  
-    strip.show();   // write all the pixels out
-    delay(wait);
-  }
 }
 
-// fill the dots one after the other with said color
-// good for testing purposes
-void colourSet(uint16_t c, uint8_t wait) {
-  int i;
-  
-  for (i=0; i < strip.numPixels(); i++) {
-      strip.setPixelColor(i, c);
-  }
-  strip.show();
-      delay(wait);
-}
-
-// fill the dots one after the other with said color
-// good for testing purposes
-void colorWipe(uint16_t c, uint8_t wait) {
-  int i;
-  
-  for (i=0; i < strip.numPixels(); i++) {
-      strip.setPixelColor(i, c);
-      strip.show();
-      delay(wait);
-  }
-}
 
 /* Helper functions */
 
 // Create a 15 bit color value from R,G,B
 unsigned int Color(byte r, byte g, byte b)
-{
-  //Serial.println(g);
+{  
   //Take the lowest 5 bits of each value and append them end to end
   return( ((unsigned int)g & 0x1F )<<10 | ((unsigned int)b & 0x1F)<<5 | (unsigned int)r & 0x1F);
 }
 
-//Input a value 0 to 127 to get a color value.
-//The colours are a transition r - g -b - back to r
-unsigned int Wheel(byte WheelPos)
-{
-  byte r,g,b;
-  switch(WheelPos >> 5)
+
+
+// Bar takes a start and end pixel, and updates it ala' a bar graph/old school LED VU meter.
+// 
+void SetBar(uint16_t barColour, uint16_t startPixel, uint16_t length, uint16_t level, uint16_t lastColour)
+{  
+   int i, j;
+   
+   //Bail out if we're going to overflow the strip.
+   if (startPixel+length-1 > strip.numPixels() )
+   {
+     return;
+   }
+
+   //clip the length if it's too long
+   if (level > length)
+   {
+     level = length;
+   }
+   
+  //set the coloured pixels on      
+  for (i=startPixel; i <= startPixel+level; i++) 
   {
-    case 0:
-      r=31- WheelPos % 32;   //Red down
-      g=WheelPos % 32;      // Green up
-      b=0;                  //blue off
-      break; 
-    case 1:
-      g=31- WheelPos % 32;  //green down
-      b=WheelPos % 32;      //blue up
-      r=0;                  //red off
-      break; 
-    case 2:
-      b=31- WheelPos % 32;  //blue down 
-      r=WheelPos % 32;      //red up
-      g=0;                  //green off
-      break; 
+    strip.setPixelColor(i,barColour);
+  }  
+  
+  //set the dark pixels off
+   for (i=startPixel+level; i < startPixel+length; i++)
+  {
+    strip.setPixelColor(i,Color(0,0,0));
   }
-  return(Color(r,g,b));
+  
+  //set the last pixel to lastColour
+  strip.setPixelColor(startPixel+level,lastColour);
+ 
+    
 }
 
     
